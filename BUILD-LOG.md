@@ -118,3 +118,77 @@ git init / clone repo, git add, commit, push origin main
 - Push: `main -> main` nang https://github.com/Unyiel37/ammora-launchpad (repo sadurunge kosong)
 - `.gitignore` bawaan Vite: `node_modules`, `dist`, `*.local` dikecualikake.
   Ora ana file `.env` sing digawe/dikomit.
+
+## 8. Fix quote 21 Nov 23:55 WIB (post-v1)
+
+### Masalah
+Situs v1 ke-load, wallet connect, chain + RPC OK, nanging quote Exchange
+gagal kanggo 0,01 lan 0,001 WETH: `Quote error: Ammora contract reverted
+with PriceRangeViolation`. Dudu gagal RPC — kontrak nolak (revert).
+
+### Penyebab (terverifikasi read-only saka VM, head ~41934xxx)
+- Pool KGPT ⇄ WETH `0xD912Fa18…` dudu pool V3 standar (slot0/liquidity/
+  tickSpacing revert) — pool concentrated Ammora dhewe (`baseToken`,
+  `quoteToken`, `sqrtPrice`, `totalLiquidity`, `reserveBase`,
+  `reserveQuote`, `isActive`, `currentFeeBps`, `quoteExactIn`,
+  `quoteExactInPartial`).
+- State pool: `reserveBase` 10,1737927 KGPT, `reserveQuote`
+  0,000000998494278301 WETH (~1e-6 WETH), spot ≈ 10.189.135 KGPT/WETH.
+  Cadangan WETH meh entek → buy normal metu saka rentang harga.
+- Matriks `quoteExactIn` langsung: buy WETH→KGPT gagal kanggo ≥0,00001
+  WETH; mung 0,000001 WETH (→ 10,03 KGPT) lan 0,0000001 WETH (→ 1,80
+  KGPT) sukses. Sell KGPT→WETH OK 1–1000 KGPT.
+  `quoteExactInPartial` buy 0,01 WETH: mung isi 0,000001028 WETH →
+  10,17 KGPT, sisane ora keisi.
+- Kurva DBC KGPT status=3 Migrated → trading DBC KGPT ora ana.
+- Bug kapindho: app ngirim `quoteBlockNumber: head` kanggo model `dbc` —
+  SDK nolak: "explicit-block swap quotes currently support concentrated
+  and compounding pools only". Dadi quote kurva DBC liwat `prepareSwap`
+  mesthi gagal. Tanpa `quoteBlockNumber`, DBC quote sukses (DKNG buy
+  0,01 → 31.092.816, full).
+- Bug katelu: app nggunakake `zeroAddress` minangka payer yen wallet
+  durung connect — SDK nolak ("payer must be a non-zero address"). Klaim
+  "quote works without a wallet" salah kanggo path `prepareExactIn`.
+  Payer placeholder `0x0000000000000000000000000000000000000001`
+  terverifikasi bisa kanggo quote (pool lan kurva).
+
+### Pasar liyane sing terverifikasi iso quote (head ~41934xxx)
+- BAEKHO pool `0x35Fff2d0…` (reserves 60.425.935 BAEKHO / 0,05089 WETH):
+  buy 0,01 → 16.593.588 BAEKHO (impact 1679 bps); buy 0,001 →
+  1.889.098 BAEKHO (impact 258 bps); sell OK.
+- DKNG curve `0xb1c4…` Active: buy 0,01 → 31.092.816, full; buy 0,001 →
+  3.709.448, full; sell 1.000.000 → 0,000257 WETH.
+- ICD curve `0x2dE7…` Active: buy 0,01 → 106.891.255, full.
+- 2D curve `0x44f3…` Active: buy 0,01 → 99.798.387, full.
+- TESTD curve `0x0540…` Active: buy 0,01 → 165.275.459, full.
+- TNDM pool `0xb2D5…` (reserves 49.899.998 TNDM / 0,003992 WETH): buy
+  0,001 OK (→ 11.009.805); buy 0,01 gagal PriceRangeViolation.
+
+### Perbaikan
+- `src/lib/tokens.ts`: daftar `MARKETS` (BAEKHO pool, DKNG/ICD/2D/TESTD
+  curve, TNDM pool, KGPT pool) + status kesehatan terverifikasi;
+  default `baekho-pool`.
+- `src/lib/ammora.ts`: `prepareSwap` mung ngirim `quoteBlockNumber`
+  kanggo concentrated/compounding, ora kanggo `dbc`; tambah
+  `QUOTE_PAYER_PLACEHOLDER`; tambah `getPoolState` (reserves/isActive)
+  lan `getPartialFill` (`quoteExactInPartial`).
+- `src/components/Exchange.tsx`: dropdown Market (default BAEKHO,
+  buy, 0,001 WETH); tampilke reserves pool; yen quote gagal
+  `PriceRangeViolation`, tampilke penjelasan basa prasaja + info
+  partial-fill + tombol "Use max fillable amount" (set amount dadi
+  jumlah sing iso keisi); quote tanpa wallet nganggo placeholder payer.
+- Logika keamanan ora diganti: Config #6 tetep diblokir, ora ana
+  Config/launch on-chain, ora ana transaksi, testnet wae, ora ana
+  private key.
+- Probe scratch (`probe-*.mjs`) wis dihapus sadurunge commit.
+
+### Verifikasi
+- `npm run build` PASS (tsc + vite, ~1,5 dtk; chunk-size warning wae).
+- `npm run preview` HTTP 200, title bener; string pasar anyar
+  ("BAEKHO ⇄ WETH", "DKNG ⇄ WETH", "Use max fillable amount",
+  "This venue's price range") ana nang bundle sing di-build.
+- Quote read-only saka VM terverifikasi liwat probe (ndeleng §8 ndhuwur).
+- Verifikasi pungkasan nang browser user (quote default muncul nang
+  situs live) durung — kudu dicek agen utama.
+
+## 9. Commit + push (fix quote)

@@ -26,6 +26,7 @@ import {
   getAmmoraV4ConfigAtBlock,
   AmmoraV4LaunchCurveClient,
   AmmoraSwapClient,
+  ammConcentratedPoolV3Abi,
   classifyAmmoraV4ExactInputFill,
   buildCreateAmmoraV4Launch,
   parseAmmoraV4LaunchCreatedReceipt,
@@ -86,7 +87,13 @@ export function isBlockedConfig(configId: bigint, configHash?: string): boolean 
   return false;
 }
 
-/** 12-confirmation finalized head, per SDK finality policy. */
+/** Quote-only payer placeholder used when no wallet is connected.
+ *  The SDK rejects the zero address as payer, so read-only quotes use this
+ *  non-zero placeholder. It never signs anything — it is only an address
+ *  the quoter simulates against. When a wallet is connected, the real
+ *  address is used instead. */
+export const QUOTE_PAYER_PLACEHOLDER: Address =
+  "0x0000000000000000000000000000000000000001";
 export async function finalizedHead(): Promise<bigint> {
   return resolveAmmoraFinalizedHead([publicClient], giwaSepoliaAutoRoute.finality);
 }
@@ -197,7 +204,13 @@ export async function prepareSwap(
   const amountIn = parseUnits(params.amountInHuman, params.tokenInDecimals);
   if (amountIn <= 0n) throw new Error("Amount must be greater than 0");
   const swaps = await getSwapClient();
-  const quoteBlockNumber = await finalizedHead();
+  // The SDK only accepts an explicit quoteBlockNumber for concentrated /
+  // compounding pools. DBC (bonding-curve) quotes must omit it — the SDK
+  // then quotes at the latest block. Passing a block for "dbc" throws
+  // "explicit-block swap quotes currently support concentrated and
+  // compounding pools only".
+  const quoteBlockNumber =
+    params.model === "dbc" ? undefined : await finalizedHead();
   return swaps.prepareExactIn({
     model: params.model,
     pool: params.pool,
@@ -209,8 +222,80 @@ export async function prepareSwap(
     slippageBps: params.slippageBps ?? 50, // 0.5% default (docs example)
     deadlineSeconds: 1200, // 20 minutes
     executionMode: "direct-wallet",
-    quoteBlockNumber,
+    ...(quoteBlockNumber !== undefined ? { quoteBlockNumber } : {}),
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Concentrated-pool state + partial fill (read-only)                  */
+/* ------------------------------------------------------------------ */
+
+export interface PoolState {
+  baseToken: Address;
+  quoteToken: Address;
+  sqrtPrice: bigint;
+  totalLiquidity: bigint;
+  reserveBase: bigint;
+  reserveQuote: bigint;
+  isActive: boolean;
+  currentFeeBps: number;
+  blockNumber: bigint;
+}
+
+/** Read a graduated concentrated pool's reserves and liveness. */
+export async function getPoolState(pool: Address): Promise<PoolState> {
+  const blockNumber = await finalizedHead();
+  const [baseToken, quoteToken, sqrtPrice, totalLiquidity, reserveBase, reserveQuote, isActive, currentFeeBps] =
+    await Promise.all([
+      publicClient.readContract({ address: pool, abi: ammConcentratedPoolV3Abi, functionName: "baseToken", blockNumber }),
+      publicClient.readContract({ address: pool, abi: ammConcentratedPoolV3Abi, functionName: "quoteToken", blockNumber }),
+      publicClient.readContract({ address: pool, abi: ammConcentratedPoolV3Abi, functionName: "sqrtPrice", blockNumber }),
+      publicClient.readContract({ address: pool, abi: ammConcentratedPoolV3Abi, functionName: "totalLiquidity", blockNumber }),
+      publicClient.readContract({ address: pool, abi: ammConcentratedPoolV3Abi, functionName: "reserveBase", blockNumber }),
+      publicClient.readContract({ address: pool, abi: ammConcentratedPoolV3Abi, functionName: "reserveQuote", blockNumber }),
+      publicClient.readContract({ address: pool, abi: ammConcentratedPoolV3Abi, functionName: "isActive", blockNumber }),
+      publicClient.readContract({ address: pool, abi: ammConcentratedPoolV3Abi, functionName: "currentFeeBps", blockNumber }),
+    ]);
+  return { baseToken, quoteToken, sqrtPrice, totalLiquidity, reserveBase, reserveQuote, isActive, currentFeeBps, blockNumber };
+}
+
+export interface PartialFill {
+  amountIn: bigint;
+  amountOut: bigint;
+  amountLeft: bigint;
+  fee: bigint;
+  nextSqrtPrice: bigint;
+}
+
+/** How much of an exact-in amount a concentrated pool can actually fill.
+ *  Used when the full quote reverts with PriceRangeViolation: the pool's
+ *  price range only fits part of the trade. Returns null when even the
+ *  partial quote reverts. */
+export async function getPartialFill(
+  pool: Address,
+  tokenIn: Address,
+  amountIn: bigint,
+): Promise<PartialFill | null> {
+  const blockNumber = await finalizedHead();
+  try {
+    const [filledIn, filledOut, amountLeft, fee, nextSqrtPrice] =
+      await publicClient.readContract({
+        address: pool,
+        abi: ammConcentratedPoolV3Abi,
+        functionName: "quoteExactInPartial",
+        args: [tokenIn, amountIn],
+        blockNumber,
+      });
+    return {
+      amountIn: filledIn,
+      amountOut: filledOut,
+      amountLeft,
+      fee,
+      nextSqrtPrice,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------------ */
