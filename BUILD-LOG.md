@@ -114,6 +114,7 @@ getChainId() → resolveAmmoraFinalizedHead() → getAmmoraV4ConfigAtBlock(25)
 git init / clone repo, git add, commit, push origin main
 ```
 
-- (Diisi hash commit sawise push — deleng laporan akhir.)
+- Commit: `18304e9042d96560257bbdd13170c903e83ee897` — "v1: Bosqu Launchpad — Ammora on GIWA (Exchange + Launchpad)"
+- Push: `main -> main` nang https://github.com/Unyiel37/ammora-launchpad (repo sadurunge kosong)
 - `.gitignore` bawaan Vite: `node_modules`, `dist`, `*.local` dikecualikake.
   Ora ana file `.env` sing digawe/dikomit.
