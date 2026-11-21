@@ -192,3 +192,19 @@ with PriceRangeViolation`. Dudu gagal RPC — kontrak nolak (revert).
   situs live) durung — kudu dicek agen utama.
 
 ## 9. Commit + push (fix quote)
+
+- Commit fix: `a45a026` — "fix: default market BAEKHO, DBC quotes without
+  quoteBlockNumber, placeholder payer, PriceRangeViolation explanation +
+  partial-fill fallback" — push `main -> main`.
+- Deploy: push ora auto-deploy (proyek Vercel dudu git-connected).
+  `vercel deploy --temporary` kapisan GAGAL: "This project was claimed
+  successfully. Run `vercel login` to continue deploying it" — proyek
+  lawas wis diklaim user, ora iso di-deploy maneh tanpa login.
+  Deploy kapindho minangka proyek temporary ANYAR:
+  **https://turbo-delta-9ikz606.tmp.now** (project
+  `prj_SuR8doH5Pu1guIfdYD9xBlNSOzf8`). Verifikasi: site HTTP 200,
+  bundle `index-BnibBcbm.js` (cocog build lokal), ngandhut "BAEKHO ⇄
+  WETH" + "Use max fillable amount", ora ana teks lawas "payer shown as
+  zero address". **Deployment iki kadaluarsa 60 menit (~01:05 WIB) yen
+  ora diklaim** — claim link ana nang output deploy (aja dishare
+  publik). URL lawas (instant-bronze-nlwo4jr.tmp.now) isih v1.
